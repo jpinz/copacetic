@@ -51,6 +51,7 @@ type patchArgs struct {
 	eolAPIBaseURL       string
 	exitOnEOL           bool
 	configFile          string
+	local               bool
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -110,6 +111,7 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 				EOLAPIBaseURL:       ua.eolAPIBaseURL,
 				ExitOnEOL:           ua.exitOnEOL,
 				ConfigFile:          ua.configFile,
+				Local:               ua.local,
 			}
 
 			if ua.configFile == "" && ua.appImage == "" {
@@ -160,6 +162,11 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 	flags.StringVarP(&ua.loader, "loader", "l", "", "Loader to use for loading images. Options: 'docker', 'podman', or empty for auto-detection based on buildkit address")
 	flags.StringVar(&ua.eolAPIBaseURL, "eol-api-url", "", "EOL API base URL, defaults to 'https://endoflife.date/api/v1/products'")
 	flags.BoolVar(&ua.exitOnEOL, "exit-on-eol", false, "Exit with error when EOL (End of Life) operating system is detected")
+	flags.BoolVar(&ua.local, "local", false,
+		"Treat the image as local-only (e.g. loaded into the Docker daemon). "+
+			"Skip remote registry lookups for image manifests, descriptors and annotations. "+
+			"Use this when patching an image that does not exist in any registry, "+
+			"such as one referenced without a registry prefix.")
 	flags.StringVar(&ua.progress, "progress", "auto", "Set the buildkit display mode (auto, plain, tty, quiet or rawjson). Set to quiet to discard all output.")
 
 	// Experimental flags - only available when COPA_EXPERIMENTAL=1

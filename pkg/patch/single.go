@@ -147,7 +147,7 @@ func patchSingleArchImage(
 			// If after filtering there are zero OS and zero library updates, return an error
 			// only when user explicitly requested some package types (default is OS) but none are patchable.
 			if len(updates.OSUpdates) == 0 && len(updates.LangUpdates) == 0 {
-				res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+				res, _ := createOriginalImageResult(imageName, &targetPlatform, image, opts.Local)
 				res.Summary = updates.CombinedSummary()
 				return res, types.ErrNoUpdatesFound
 			}
@@ -249,7 +249,7 @@ func patchSingleArchImage(
 	// Wait for completion
 	if err := eg.Wait(); err != nil {
 		if errors.Is(err, types.ErrNoUpdatesFound) {
-			res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+			res, _ := createOriginalImageResult(imageName, &targetPlatform, image, opts.Local)
 			if updates != nil {
 				res.Summary = updates.CombinedSummary()
 			}
@@ -259,7 +259,7 @@ func patchSingleArchImage(
 	}
 
 	// Get patched descriptor and add annotations, including preserved states
-	result, err := createPatchResultWithStates(imageName, patchedImageName, &targetPlatform, image, finalLoaderType, patchResult)
+	result, err := createPatchResultWithStates(imageName, patchedImageName, &targetPlatform, image, finalLoaderType, patchResult, opts.Local)
 	if err != nil {
 		return nil, err
 	}
@@ -399,7 +399,7 @@ func loadImageToRuntime(ctx context.Context, pipeR io.ReadCloser, patchedImageNa
 
 // createPatchResultWithStates creates the final patch result with descriptor, annotations, and preserved BuildKit states.
 func createPatchResultWithStates(imageName reference.Named, patchedImageName string,
-	targetPlatform *types.PatchPlatform, image, loaderType string, patchResult *Result,
+	targetPlatform *types.PatchPlatform, image, loaderType string, patchResult *Result, localOnly bool,
 ) (*types.PatchResult, error) {
 	// Use the appropriate runtime for image descriptor lookup
 	runtime := imageloader.Docker
@@ -412,7 +412,7 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 	descriptorCtx := context.Background()
 
 	log.Debugf("Getting image descriptor for %s...", patchedImageName)
-	patchedDesc, err := utils.GetImageDescriptor(descriptorCtx, patchedImageName, runtime)
+	patchedDesc, err := utils.GetImageDescriptor(descriptorCtx, patchedImageName, runtime, localOnly)
 	if err != nil {
 		prettyPlatform := platforms.Format(targetPlatform.Platform)
 		log.Warnf("failed to get patched image descriptor for platform '%s': %v", prettyPlatform, err)
@@ -426,7 +426,7 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 			OS:           targetPlatform.OS,
 			Architecture: targetPlatform.Architecture,
 			Variant:      targetPlatform.Variant,
-		})
+		}, localOnly)
 		if err != nil {
 			log.Warnf("Failed to get original manifest level annotations for platform %s: %v", targetPlatform.Platform, err)
 		} else if len(originalAnnotations) > 0 {
@@ -622,8 +622,8 @@ func parsePkgTypes(pkgTypesStr string) ([]string, error) {
 	return validTypes, nil
 }
 
-func createOriginalImageResult(imageName reference.Named, targetPlatform *types.PatchPlatform, originalImageRef string) (*types.PatchResult, error) {
-	originalDesc, err := getPlatformDescriptorFromManifest(originalImageRef, targetPlatform)
+func createOriginalImageResult(imageName reference.Named, targetPlatform *types.PatchPlatform, originalImageRef string, localOnly bool) (*types.PatchResult, error) {
+	originalDesc, err := getPlatformDescriptorFromManifest(originalImageRef, targetPlatform, localOnly)
 	if err != nil {
 		log.Warnf("Could not get original descriptor for up-to-date platform %s/%s: %v", targetPlatform.OS, targetPlatform.Architecture, err)
 	}

@@ -440,7 +440,7 @@ func verifyAnnotations(t *testing.T, patchedRef string, platforms []string, repo
 				Architecture: manifestEntry.Platform.Architecture,
 				Variant:      manifestEntry.Platform.Variant,
 			}
-			originalAnnotations, err := utils.GetPlatformManifestAnnotations(context.Background(), originalRef, platform)
+			originalAnnotations, err := utils.GetPlatformManifestAnnotations(context.Background(), originalRef, platform, false)
 			require.NoError(t, err, "failed to get original annotations for platform %s", platformStr)
 
 			// Check that every original annotation is present in the patched manifest

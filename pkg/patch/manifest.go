@@ -30,6 +30,7 @@ func createMultiPlatformManifest(
 	imageName reference.NamedTagged,
 	items []types.PatchResult,
 	originalImage string,
+	localOnly bool,
 ) error {
 	resolver := imagetools.New(imagetools.Opt{
 		Auth: authprovider.LoadAuthConfig(config.LoadDefaultConfigFile(os.Stderr)),
@@ -39,7 +40,7 @@ func createMultiPlatformManifest(
 	annotations := make(map[exptypes.AnnotationKey]string)
 
 	// get the original image index manifest annotations
-	originalAnnotations, err := utils.GetIndexManifestAnnotations(ctx, originalImage)
+	originalAnnotations, err := utils.GetIndexManifestAnnotations(ctx, originalImage, localOnly)
 	if err != nil {
 		log.Warnf("Failed to get original image annotations: %v", err)
 		// Even if we fail to get original annotations, we should add Copa annotations

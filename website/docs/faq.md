@@ -189,6 +189,23 @@ No. To prevent a buildup of layers, Copa discards the previous patch layer with 
 
 If you're seeing errors related to missing **Release files** or `404 Not Found` errors during patching, your base image is likely using an End-of-Life (EOL) release of a distribution. Copa cannot patch images based on EOL operating systems where the package repositories have been removed or archived.
 
+## How do I patch an image that only exists in my local container runtime?
+
+Copa normally falls back to the configured container registry when it cannot find an image (or its manifest) in the local Docker / Podman daemon. For images that have no registry counterpart — for example, images built locally and tagged without a registry prefix such as `image:tag` — that fallback produces noisy warnings and ultimately fails with `UNAUTHORIZED` errors against `index.docker.io`.
+
+Pass the `--local` flag to `copa patch` to tell Copa that the image is only available in the local runtime. With `--local` set, Copa will:
+
+- Skip remote registry lookups for image descriptors, index annotations and per-platform manifest annotations.
+- Avoid falling back to the registry when discovering platforms or exporting preserved platforms to an OCI layout.
+- Return the local-only error directly when an image cannot be found in the daemon, instead of obscuring it behind a remote-lookup failure.
+
+Example:
+
+```bash
+copa patch --local -i image:tag -r trivy.json -t image:tag-patched
+```
+
+
 ## What does "End-of-Life" mean for patching?
 
 When a release of Linux distribution reaches its End-of-Life date:

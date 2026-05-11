@@ -56,4 +56,9 @@ type Options struct {
 	// EOL configuration
 	EOLAPIBaseURL string
 	ExitOnEOL     bool
+
+	// Local indicates that the image is only available in the local container
+	// runtime (e.g., Docker daemon) and copa should not contact a remote
+	// registry to inspect or fetch image metadata.
+	Local bool
 }
