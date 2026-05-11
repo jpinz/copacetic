@@ -35,7 +35,7 @@ func patchMultiPlatformImage(
 	if reportDir != "" {
 		// Using report directory - discover platforms from reports
 		var err error
-		platforms, err = buildkit.DiscoverPlatforms(image, reportDir, opts.Scanner)
+		platforms, err = buildkit.DiscoverPlatforms(image, reportDir, opts.Scanner, opts.Local)
 		if err != nil {
 			return err
 		}
@@ -173,7 +173,7 @@ func patchMultiPlatformImage(
 				}
 
 				// Get the original platform descriptor from the manifest
-				originalDesc, err := getPlatformDescriptorFromManifest(image, &p)
+				originalDesc, err := getPlatformDescriptorFromManifest(image, &p, opts.Local)
 				if err != nil {
 					mu.Lock()
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
@@ -355,7 +355,7 @@ func patchMultiPlatformImage(
 	}
 
 	if opts.Push {
-		err = createMultiPlatformManifest(ctx, patchedImageName, patchResults, image)
+		err = createMultiPlatformManifest(ctx, patchedImageName, patchResults, image, opts.Local)
 		if err != nil {
 			return fmt.Errorf("manifest list creation failed: %w", err)
 		}
@@ -421,7 +421,7 @@ func patchMultiPlatformImage(
 	}
 	// Create OCI layout if requested and not pushing to registry
 	if opts.OCIDir != "" && !opts.Push {
-		if err := buildkit.CreateOCILayoutFromResults(opts.OCIDir, patchResults, platforms); err != nil {
+		if err := buildkit.CreateOCILayoutFromResults(opts.OCIDir, patchResults, platforms, opts.Local); err != nil {
 			log.Warnf("Failed to create OCI layout: %v", err)
 			return fmt.Errorf("failed to create OCI layout: %w", err)
 		}

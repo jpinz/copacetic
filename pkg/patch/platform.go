@@ -118,18 +118,23 @@ func filterPlatforms(discoveredPlatforms []types.PatchPlatform, targetPlatforms 
 }
 
 // getPlatformDescriptorFromManifest gets the descriptor for a specific platform from a multi-arch manifest.
+// When localOnly is true, the function only consults the local daemon and does not fall back to the remote registry.
 func getPlatformDescriptorFromManifest(
 	imageRef string,
 	targetPlatform *types.PatchPlatform,
+	localOnly bool,
 ) (*ispec.Descriptor, error) {
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing reference %q: %w", imageRef, err)
 	}
 
-	// Try local daemon first, then fall back to remote
+	// Try local daemon first, then fall back to remote (unless localOnly)
 	desc, err := buildkit.TryGetManifestFromLocal(ref)
 	if err != nil {
+		if localOnly {
+			return nil, fmt.Errorf("error fetching descriptor for %q from local daemon (--local was specified, skipping remote lookup): %w", imageRef, err)
+		}
 		log.Debugf("Failed to get descriptor from local daemon: %v, trying remote registry", err)
 		desc, err = remote.Get(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 		if err != nil {

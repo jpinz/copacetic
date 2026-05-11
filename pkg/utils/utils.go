@@ -270,9 +270,10 @@ func remoteImageDescriptor(imageRef string) (*ocispec.Descriptor, error) {
 
 // GetImageDescriptor retrieves the image descriptor for a given image reference using the specified runtime.
 // It first tries to inspect the image using the specified runtime client (local).
-// If the image is not found locally or a local error occurs, it tries to get the image descriptor from the remote registry.
+// If the image is not found locally or a local error occurs, it tries to get the image descriptor from the remote registry,
+// unless localOnly is true, in which case the remote lookup is skipped.
 // runtime should be imageloader.Docker or imageloader.Podman.
-func GetImageDescriptor(ctx context.Context, imageRef, runtime string) (*ocispec.Descriptor, error) {
+func GetImageDescriptor(ctx context.Context, imageRef, runtime string, localOnly bool) (*ocispec.Descriptor, error) {
 	log.Debugf("Attempting to get local image descriptor for %s using runtime %s", imageRef, runtime)
 
 	var localDesc *ocispec.Descriptor
@@ -292,6 +293,12 @@ func GetImageDescriptor(ctx context.Context, imageRef, runtime string) (*ocispec
 	}
 
 	isNotFoundError := errdefs.IsNotFound(localErr)
+	if localOnly {
+		if isNotFoundError {
+			return nil, fmt.Errorf("image '%s' not found locally and --local was specified, skipping remote lookup: %w", imageRef, localErr)
+		}
+		return nil, fmt.Errorf("local lookup for '%s' failed and --local was specified, skipping remote lookup: %w", imageRef, localErr)
+	}
 	if isNotFoundError {
 		log.Debugf("image %s not found locally in %s (error: %v), trying remote.", imageRef, runtime, localErr)
 	} else {
@@ -314,7 +321,13 @@ func GetImageDescriptor(ctx context.Context, imageRef, runtime string) (*ocispec
 
 // GetIndexManifestAnnotations retrieves annotations from an image index manifest.
 // This is specifically for multi-platform images to get the index-level annotations.
-func GetIndexManifestAnnotations(_ context.Context, imageRef string) (map[string]string, error) {
+// When localOnly is true the function avoids contacting the remote registry and
+// returns nil annotations with no error.
+func GetIndexManifestAnnotations(_ context.Context, imageRef string, localOnly bool) (map[string]string, error) {
+	if localOnly {
+		log.Debugf("Skipping index manifest annotation lookup for %s because --local was specified", imageRef)
+		return nil, nil
+	}
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse image reference '%s': %w", imageRef, err)
@@ -350,7 +363,13 @@ func GetIndexManifestAnnotations(_ context.Context, imageRef string) (map[string
 
 // GetPlatformManifestAnnotations retrieves manifest-level annotations for a specific platform
 // from an image index manifest.
-func GetPlatformManifestAnnotations(_ context.Context, imageRef string, targetPlatform *ocispec.Platform) (map[string]string, error) {
+// When localOnly is true the function avoids contacting the remote registry and
+// returns nil annotations with no error.
+func GetPlatformManifestAnnotations(_ context.Context, imageRef string, targetPlatform *ocispec.Platform, localOnly bool) (map[string]string, error) {
+	if localOnly {
+		log.Debugf("Skipping platform manifest annotation lookup for %s because --local was specified", imageRef)
+		return nil, nil
+	}
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse image reference '%s': %w", imageRef, err)

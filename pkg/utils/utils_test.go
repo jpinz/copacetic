@@ -364,7 +364,7 @@ func TestGetImageDescriptor(t *testing.T) {
 
 	// Test with Docker runtime (default)
 	t.Run("docker_runtime_fallback", func(t *testing.T) {
-		desc, err := GetImageDescriptor(ctx, "nonexistent/test:image", imageloader.Docker)
+		desc, err := GetImageDescriptor(ctx, "nonexistent/test:image", imageloader.Docker, false)
 
 		// Should fail but exercise the Docker -> remote fallback logic
 		assert.Error(t, err)
@@ -377,7 +377,7 @@ func TestGetImageDescriptor(t *testing.T) {
 
 	// Test with Podman runtime
 	t.Run("podman_runtime_fallback", func(t *testing.T) {
-		desc, err := GetImageDescriptor(ctx, "nonexistent/test:image", imageloader.Podman)
+		desc, err := GetImageDescriptor(ctx, "nonexistent/test:image", imageloader.Podman, false)
 
 		// Should fail but exercise the Podman -> remote fallback logic
 		assert.Error(t, err)
@@ -391,18 +391,27 @@ func TestGetImageDescriptor(t *testing.T) {
 
 	// Test with invalid image reference (should fail early)
 	t.Run("invalid_image_reference", func(t *testing.T) {
-		desc, err := GetImageDescriptor(ctx, "invalid-image-format", imageloader.Docker)
+		desc, err := GetImageDescriptor(ctx, "invalid-image-format", imageloader.Docker, false)
 		assert.Error(t, err)
 		assert.Nil(t, desc)
 	})
 
 	// Test with unknown runtime (should default to Docker)
 	t.Run("unknown_runtime_defaults_to_docker", func(t *testing.T) {
-		desc, err := GetImageDescriptor(ctx, "nonexistent/test:image", "unknown-runtime")
+		desc, err := GetImageDescriptor(ctx, "nonexistent/test:image", "unknown-runtime", false)
 
 		// Should behave the same as Docker runtime
 		assert.Error(t, err)
 		assert.Nil(t, desc)
+	})
+
+	// Test that --local skips the remote lookup entirely
+	t.Run("local_only_skips_remote", func(t *testing.T) {
+		desc, err := GetImageDescriptor(ctx, "definitely/nonexistent:image", imageloader.Docker, true)
+		assert.Error(t, err)
+		assert.Nil(t, desc)
+		assert.Contains(t, err.Error(), "--local")
+		assert.NotContains(t, err.Error(), "and remote lookup also failed")
 	})
 
 	// Test context cancellation (this might succeed with remote fallback, so test differently)
@@ -411,7 +420,7 @@ func TestGetImageDescriptor(t *testing.T) {
 		cancel()
 
 		// Use a non-existent image to ensure it fails both locally and remotely
-		desc, err := GetImageDescriptor(cancelledCtx, "nonexistent/canceled:test", imageloader.Docker)
+		desc, err := GetImageDescriptor(cancelledCtx, "nonexistent/canceled:test", imageloader.Docker, false)
 		if err != nil {
 			// This is the expected case - both local and remote should fail
 			assert.Nil(t, desc)
@@ -429,7 +438,7 @@ func TestGetIndexManifestAnnotations(t *testing.T) {
 
 	// Test with truly invalid image reference format
 	t.Run("invalid_image_reference", func(t *testing.T) {
-		annotations, err := GetIndexManifestAnnotations(ctx, "")
+		annotations, err := GetIndexManifestAnnotations(ctx, "", false)
 		assert.Error(t, err)
 		assert.Nil(t, annotations)
 		assert.Contains(t, err.Error(), "failed to parse image reference")
@@ -437,10 +446,17 @@ func TestGetIndexManifestAnnotations(t *testing.T) {
 
 	// Test with non-existent remote image
 	t.Run("nonexistent_remote_image", func(t *testing.T) {
-		annotations, err := GetIndexManifestAnnotations(ctx, "definitely/nonexistent:image")
+		annotations, err := GetIndexManifestAnnotations(ctx, "definitely/nonexistent:image", false)
 		assert.Error(t, err)
 		assert.Nil(t, annotations)
 		assert.Contains(t, err.Error(), "failed to get descriptor")
+	})
+
+	// Test that --local short-circuits the remote lookup entirely
+	t.Run("local_only_skips_remote", func(t *testing.T) {
+		annotations, err := GetIndexManifestAnnotations(ctx, "definitely/nonexistent:image", true)
+		assert.NoError(t, err)
+		assert.Nil(t, annotations)
 	})
 }
 
@@ -454,7 +470,7 @@ func TestGetPlatformManifestAnnotations(t *testing.T) {
 
 	// Test with invalid image reference
 	t.Run("invalid_image_reference", func(t *testing.T) {
-		annotations, err := GetPlatformManifestAnnotations(ctx, "", targetPlatform)
+		annotations, err := GetPlatformManifestAnnotations(ctx, "", targetPlatform, false)
 		assert.Error(t, err)
 		assert.Nil(t, annotations)
 		assert.Contains(t, err.Error(), "failed to parse image reference")
@@ -462,7 +478,7 @@ func TestGetPlatformManifestAnnotations(t *testing.T) {
 
 	// Test with non-existent remote image
 	t.Run("nonexistent_remote_image", func(t *testing.T) {
-		annotations, err := GetPlatformManifestAnnotations(ctx, "definitely/nonexistent:image", targetPlatform)
+		annotations, err := GetPlatformManifestAnnotations(ctx, "definitely/nonexistent:image", targetPlatform, false)
 		assert.Error(t, err)
 		assert.Nil(t, annotations)
 		assert.Contains(t, err.Error(), "failed to get descriptor")
@@ -470,9 +486,16 @@ func TestGetPlatformManifestAnnotations(t *testing.T) {
 
 	// Test with nil platform (edge case)
 	t.Run("nil_platform", func(t *testing.T) {
-		annotations, err := GetPlatformManifestAnnotations(ctx, "definitely/nonexistent:image", nil)
+		annotations, err := GetPlatformManifestAnnotations(ctx, "definitely/nonexistent:image", nil, false)
 		assert.Error(t, err)
 		assert.Nil(t, annotations)
 		// Should still fail at the descriptor fetch level before platform processing
+	})
+
+	// Test that --local short-circuits the remote lookup entirely
+	t.Run("local_only_skips_remote", func(t *testing.T) {
+		annotations, err := GetPlatformManifestAnnotations(ctx, "definitely/nonexistent:image", targetPlatform, true)
+		assert.NoError(t, err)
+		assert.Nil(t, annotations)
 	})
 }

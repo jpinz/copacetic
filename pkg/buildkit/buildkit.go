@@ -313,9 +313,11 @@ func TryGetManifestFromLocal(ref name.Reference) (*remote.Descriptor, error) {
 // DiscoverPlatformsFromReference discovers platforms from both local and remote manifests.
 // It first attempts to inspect the manifest locally using Docker API
 // to get raw manifest data and determine if it's multi-platform.
-// If local inspection fails, it falls back to remote registry inspection.
+// If local inspection fails, it falls back to remote registry inspection,
+// unless localOnly is true, in which case the remote lookup is skipped and the
+// local error is returned.
 // This allows Copa to patch multi-platform manifests that exist locally but not in the registry.
-func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, error) {
+func DiscoverPlatformsFromReference(manifestRef string, localOnly bool) ([]types.PatchPlatform, error) {
 	var platforms []types.PatchPlatform
 
 	ref, err := name.ParseReference(manifestRef)
@@ -323,9 +325,12 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 		return nil, fmt.Errorf("error parsing reference %q: %w", manifestRef, err)
 	}
 
-	// Try local daemon first, then fall back to remote
+	// Try local daemon first, then fall back to remote (unless localOnly)
 	desc, err := TryGetManifestFromLocal(ref)
 	if err != nil {
+		if localOnly {
+			return nil, fmt.Errorf("error fetching descriptor for %q from local daemon (--local was specified, skipping remote lookup): %w", manifestRef, err)
+		}
 		log.Debugf("Failed to get descriptor from local daemon: %v, trying remote registry", err)
 		desc, err = remote.Get(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 		if err != nil {
@@ -423,10 +428,10 @@ func PlatformKey(pl specs.Platform) string {
 	return key
 }
 
-func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPlatform, error) {
+func DiscoverPlatforms(manifestRef, reportDir, scanner string, localOnly bool) ([]types.PatchPlatform, error) {
 	var platforms []types.PatchPlatform
 
-	p, err := DiscoverPlatformsFromReference(manifestRef)
+	p, err := DiscoverPlatformsFromReference(manifestRef, localOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -870,7 +875,8 @@ func mapGoArch(arch, variant string) string {
 }
 
 // CreateOCILayoutFromResults creates an OCI layout directory from patch results using BuildKit's OCI exporter.
-func CreateOCILayoutFromResults(outputDir string, results []types.PatchResult, platforms []types.PatchPlatform) error {
+// When localOnly is true, no remote registry calls will be made when exporting preserved platforms.
+func CreateOCILayoutFromResults(outputDir string, results []types.PatchResult, platforms []types.PatchPlatform, localOnly bool) error {
 	log.Infof("Creating multi-platform OCI layout in directory: %s with %d platforms", outputDir, len(platforms))
 
 	// Create output directory
@@ -890,14 +896,14 @@ func CreateOCILayoutFromResults(outputDir string, results []types.PatchResult, p
 
 	if hasStates {
 		log.Info("Using BuildKit states directly for OCI export")
-		return createOCILayoutFromStates(outputDir, results, platforms)
+		return createOCILayoutFromStates(outputDir, results, platforms, localOnly)
 	}
 
 	return fmt.Errorf("no BuildKit states available for OCI export, cannot proceed")
 }
 
 // createOCILayoutFromStates creates OCI layout directly from BuildKit states.
-func createOCILayoutFromStates(outputDir string, results []types.PatchResult, platforms []types.PatchPlatform) error {
+func createOCILayoutFromStates(outputDir string, results []types.PatchResult, platforms []types.PatchPlatform, localOnly bool) error {
 	log.Info("Creating OCI layout from preserved BuildKit states and preserved platforms")
 
 	// Separate patched and preserved platforms
@@ -955,12 +961,12 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 	switch {
 	case hasPreservedPlatforms && hasPatchedPlatforms:
 		log.Infof("Creating mixed OCI layout with %d patched and %d preserved platforms", len(platformStates), len(preservedPlatforms))
-		return createMixedOCILayout(outputDir, results, platformStates, platformSpecs, preservedPlatforms)
+		return createMixedOCILayout(outputDir, results, platformStates, platformSpecs, preservedPlatforms, localOnly)
 	case hasPatchedPlatforms:
 		log.Infof("Creating OCI layout from %d patched platforms only", len(platformStates))
 	case hasPreservedPlatforms:
 		log.Infof("Creating OCI layout from %d preserved platforms only", len(preservedPlatforms))
-		return createPreservedOnlyOCILayout(outputDir, results, preservedPlatforms)
+		return createPreservedOnlyOCILayout(outputDir, results, preservedPlatforms, localOnly)
 	}
 
 	log.Infof("Creating OCI layout from %d BuildKit states", len(platformStates))
@@ -1374,6 +1380,7 @@ func createMixedOCILayout(
 	platformStates []llb.State,
 	platformSpecs []specs.Platform,
 	preservedPlatforms []types.PatchPlatform,
+	localOnly bool,
 ) error {
 	log.Infof("Creating mixed OCI layout with %d patched platforms and %d preserved platforms", len(platformStates), len(preservedPlatforms))
 
@@ -1426,7 +1433,7 @@ func createMixedOCILayout(
 			log.Warn("Could not determine original image reference for preserved platforms, skipping preserved platforms export")
 		} else {
 			var err error
-			preservedManifests, err = exportPreservedPlatformsToOutput(outputDir, originalRef, preservedPlatforms, allBlobs)
+			preservedManifests, err = exportPreservedPlatformsToOutput(outputDir, originalRef, preservedPlatforms, allBlobs, localOnly)
 			if err != nil {
 				return fmt.Errorf("failed to export preserved platforms: %w", err)
 			}
@@ -1523,17 +1530,21 @@ func copyBlobsToOutput(outputDir, tempDir string, blobsSet map[string]bool) erro
 }
 
 // exportPreservedPlatformsToOutput exports preserved platforms from original image to output directory.
-func exportPreservedPlatformsToOutput(outputDir string, originalRef reference.Named, preservedPlatforms []types.PatchPlatform, blobsSet map[string]bool) ([]map[string]interface{}, error) {
+// When localOnly is true, the function will not contact the remote registry as a fallback.
+func exportPreservedPlatformsToOutput(outputDir string, originalRef reference.Named, preservedPlatforms []types.PatchPlatform, blobsSet map[string]bool, localOnly bool) ([]map[string]interface{}, error) {
 	// Convert reference.Named to name.Reference for go-containerregistry
 	ref, err := name.ParseReference(originalRef.String())
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse reference: %w", err)
 	}
 
-	// Try local daemon first, then fall back to remote
+	// Try local daemon first, then fall back to remote (unless localOnly)
 	desc, err := TryGetManifestFromLocal(ref)
 	isLocal := (err == nil)
 	if err != nil {
+		if localOnly {
+			return nil, fmt.Errorf("failed to get descriptor from local daemon (--local was specified, skipping remote lookup): %w", err)
+		}
 		log.Debugf("Failed to get descriptor from local daemon: %v, trying remote registry", err)
 		desc, err = remote.Get(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 		if err != nil {
@@ -1641,6 +1652,9 @@ func exportPreservedPlatformsToOutput(outputDir string, originalRef reference.Na
 						// Try to get from local daemon first
 						platformDesc, err := TryGetManifestFromLocal(platformRef)
 						if err != nil {
+							if localOnly {
+								return nil, fmt.Errorf("failed to get image from local daemon for preserved platform %s/%s (--local was specified, skipping remote lookup): %w", platformSpec.OS, platformSpec.Architecture, err)
+							}
 							// Fall back to remote if local fails
 							img, err = remote.Image(platformRef, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 							if err != nil {
@@ -1847,7 +1861,7 @@ func createFinalOCILayout(outputDir string, allManifests []map[string]interface{
 }
 
 // createPreservedOnlyOCILayout creates an OCI layout from preserved platforms only.
-func createPreservedOnlyOCILayout(outputDir string, results []types.PatchResult, preservedPlatforms []types.PatchPlatform) error {
+func createPreservedOnlyOCILayout(outputDir string, results []types.PatchResult, preservedPlatforms []types.PatchPlatform, localOnly bool) error {
 	log.Infof("Creating OCI layout from %d preserved platforms only", len(preservedPlatforms))
 
 	// Find the original image reference from results
@@ -1864,11 +1878,11 @@ func createPreservedOnlyOCILayout(outputDir string, results []types.PatchResult,
 	}
 
 	// Use go-containerregistry to get the original manifest and export only needed platforms
-	return exportOriginalImagePlatformsAsOCI(outputDir, originalRef, preservedPlatforms)
+	return exportOriginalImagePlatformsAsOCI(outputDir, originalRef, preservedPlatforms, localOnly)
 }
 
 // exportOriginalImagePlatformsAsOCI uses go-containerregistry to export specific platforms.
-func exportOriginalImagePlatformsAsOCI(outputDir string, originalRef reference.Named, platforms []types.PatchPlatform) error {
+func exportOriginalImagePlatformsAsOCI(outputDir string, originalRef reference.Named, platforms []types.PatchPlatform, localOnly bool) error {
 	log.Infof("Exporting %d platforms from original image %s using go-containerregistry", len(platforms), originalRef.String())
 
 	// Convert reference.Named to name.Reference for go-containerregistry
@@ -1877,10 +1891,18 @@ func exportOriginalImagePlatformsAsOCI(outputDir string, originalRef reference.N
 		return fmt.Errorf("failed to parse reference: %w", err)
 	}
 
-	// Get the remote descriptor
-	desc, err := remote.Get(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
-	if err != nil {
-		return fmt.Errorf("failed to get remote descriptor: %w", err)
+	// Get the descriptor: try local first when localOnly, otherwise prefer remote
+	var desc *remote.Descriptor
+	if localOnly {
+		desc, err = TryGetManifestFromLocal(ref)
+		if err != nil {
+			return fmt.Errorf("failed to get descriptor from local daemon (--local was specified, skipping remote lookup): %w", err)
+		}
+	} else {
+		desc, err = remote.Get(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+		if err != nil {
+			return fmt.Errorf("failed to get remote descriptor: %w", err)
+		}
 	}
 
 	// Check if it's a manifest list (multi-platform)
