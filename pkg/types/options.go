@@ -56,4 +56,16 @@ type Options struct {
 	// EOL configuration
 	EOLAPIBaseURL string
 	ExitOnEOL     bool
+
+	// AttestationOutput, if set, causes Copa to generate an in-toto Statement
+	// for the patched image and write it as JSON to this file path.
+	// For pushed images the attestation records both the original and patched
+	// image digests. For local-only images it records whatever digest information
+	// is available.
+	AttestationOutput string
+
+	// CopacticVersion is the Copa release string (e.g. "v0.7.0").
+	// If set it is embedded in the generated in-toto attestation.
+	// It is populated by the CLI from the binary version at startup.
+	CopacticVersion string
 }

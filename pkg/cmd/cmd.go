@@ -51,6 +51,7 @@ type patchArgs struct {
 	eolAPIBaseURL       string
 	exitOnEOL           bool
 	configFile          string
+	attestationOutput   string
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -60,7 +61,7 @@ func NewPatchCmd() *cobra.Command {
 		Short: "Patch container image(s) with upgrade packages specified by a vulnerability report or by comprehensive update",
 		Example: `copa patch -i images/python:3.7-alpine -r trivy.json -t 3.7-alpine-patched (Single Image Patching)
 copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Validate library patch level
 			if err := validateLibraryPatchLevel(ua.libraryPatchLevel, ua.pkgTypes); err != nil {
 				return err
@@ -110,6 +111,8 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 				EOLAPIBaseURL:       ua.eolAPIBaseURL,
 				ExitOnEOL:           ua.exitOnEOL,
 				ConfigFile:          ua.configFile,
+				AttestationOutput:   ua.attestationOutput,
+				CopacticVersion:     cmd.Root().Version,
 			}
 
 			if ua.configFile == "" && ua.appImage == "" {
@@ -161,6 +164,11 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 	flags.StringVar(&ua.eolAPIBaseURL, "eol-api-url", "", "EOL API base URL, defaults to 'https://endoflife.date/api/v1/products'")
 	flags.BoolVar(&ua.exitOnEOL, "exit-on-eol", false, "Exit with error when EOL (End of Life) operating system is detected")
 	flags.StringVar(&ua.progress, "progress", "auto", "Set the buildkit display mode (auto, plain, tty, quiet or rawjson). Set to quiet to discard all output.")
+	flags.StringVar(&ua.attestationOutput, "attestation-output", "",
+		"Write a Copa in-toto attestation (JSON) for the patched image to this file path. "+
+			"The attestation records the original image digest, patch invocation parameters, "+
+			"and package update details. For local (non-pushed) images the attestation is "+
+			"written as a sidecar JSON file since OCI referrer attachment requires a registry.")
 
 	// Experimental flags - only available when COPA_EXPERIMENTAL=1
 	if os.Getenv("COPA_EXPERIMENTAL") == "1" {

@@ -11,6 +11,7 @@ import (
 	"github.com/moby/buildkit/util/progress/progressui"
 	log "github.com/sirupsen/logrus"
 
+	"github.com/project-copacetic/copacetic/pkg/attestation"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/tui"
@@ -87,6 +88,9 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 		log.Debugf("Configured EOL API base URL: %s", opts.EOLAPIBaseURL)
 	}
 
+	// Record when the overall patch operation started, for use in attestations.
+	startedAt := time.Now().UTC()
+
 	image := opts.Image
 	reportPath := opts.Report
 	targetPlatforms := opts.Platforms
@@ -130,6 +134,7 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 			}
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
+				maybeWriteAttestation(opts, result, patchPlatform.String(), startedAt)
 			}
 			return err
 		}
@@ -163,6 +168,7 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 			}
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
+				maybeWriteAttestation(opts, result, patchPlatform.String(), startedAt)
 			}
 			return err
 		}
@@ -207,8 +213,34 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 	}
 	if err == nil && result != nil {
 		log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef.String())
+		maybeWriteAttestation(opts, result, patchPlatform.String(), startedAt)
 	}
 	return err
+}
+
+// maybeWriteAttestation generates and writes an in-toto attestation for the patched
+// image if opts.AttestationOutput is non-empty. Errors are logged as warnings so
+// that attestation failures do not block the patch operation from succeeding.
+func maybeWriteAttestation(opts *types.Options, result *types.PatchResult, platform string, startedAt time.Time) {
+	if opts.AttestationOutput == "" {
+		return
+	}
+
+	attInput := attestation.BuildAttestationInput(
+		result,
+		opts.CopacticVersion,
+		platform,
+		opts.Report,
+		opts.IgnoreError,
+		opts.PkgTypes,
+		opts.Scanner,
+		startedAt,
+		nil, // errored packages not available at this call site
+	)
+
+	if err := attestation.GenerateAndWrite(attInput, opts.AttestationOutput); err != nil {
+		log.Warnf("Failed to write attestation to %s: %v", opts.AttestationOutput, err)
+	}
 }
 
 // logPatchSummary prints the patch summary if available.
