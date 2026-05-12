@@ -249,6 +249,47 @@ func TestPatchResult(t *testing.T) {
 		assert.NotNil(t, result.OriginalRef)
 		assert.NotNil(t, result.PatchedRef)
 	})
+
+	t.Run("ErroredPackages populated", func(t *testing.T) {
+		originalRef, err := reference.ParseNormalizedNamed("registry.io/original:tag")
+		require.NoError(t, err)
+
+		patchedRef, err := reference.ParseNormalizedNamed("registry.io/patched:tag")
+		require.NoError(t, err)
+
+		result := PatchResult{
+			OriginalRef:     originalRef,
+			PatchedRef:      patchedRef,
+			ErroredPackages: []string{"libssl1.1", "libcurl4"},
+		}
+
+		require.Len(t, result.ErroredPackages, 2)
+		assert.Equal(t, "libssl1.1", result.ErroredPackages[0])
+		assert.Equal(t, "libcurl4", result.ErroredPackages[1])
+	})
+
+	t.Run("OriginalDesc captured", func(t *testing.T) {
+		originalRef, err := reference.ParseNormalizedNamed("registry.io/original:tag")
+		require.NoError(t, err)
+
+		patchedRef, err := reference.ParseNormalizedNamed("registry.io/patched:tag")
+		require.NoError(t, err)
+
+		origDesc := &ispec.Descriptor{
+			MediaType: "application/vnd.oci.image.manifest.v1+json",
+			Digest:    "sha256:aabbccdd",
+			Size:      512,
+		}
+
+		result := PatchResult{
+			OriginalRef:  originalRef,
+			OriginalDesc: origDesc,
+			PatchedRef:   patchedRef,
+		}
+
+		require.NotNil(t, result.OriginalDesc)
+		assert.Equal(t, "sha256:aabbccdd", result.OriginalDesc.Digest.String())
+	})
 }
 
 func TestMultiPlatformSummary(t *testing.T) {

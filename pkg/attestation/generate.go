@@ -16,8 +16,8 @@ import (
 
 // Input contains all information required to generate a Copa patch attestation.
 type Input struct {
-	// CopacticVersion is the Copa release string (e.g. "v0.7.0"). May be empty.
-	CopacticVersion string
+	// CopaVersion is the Copa release string (e.g. "v0.7.0"). May be empty.
+	CopaVersion string
 
 	// StartedAt is the time the patch operation was initiated.
 	StartedAt time.Time
@@ -102,7 +102,7 @@ func Generate(input Input) (*Statement, error) {
 		BuildType: BuildTypeURI,
 		Builder: Builder{
 			ID:      BuilderID,
-			Version: input.CopacticVersion,
+			Version: input.CopaVersion,
 		},
 		Invocation: Invocation{
 			ConfigSource: ConfigSource{
@@ -196,7 +196,7 @@ func BuildAttestationInput(
 	}
 
 	input := Input{
-		CopacticVersion:    copaVersion,
+		CopaVersion:    copaVersion,
 		StartedAt:          startedAt,
 		FinishedAt:         time.Now().UTC(),
 		Platform:           platform,

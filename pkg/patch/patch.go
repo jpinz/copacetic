@@ -226,16 +226,21 @@ func maybeWriteAttestation(opts *types.Options, result *types.PatchResult, platf
 		return
 	}
 
+	var erroredPackages []string
+	if result != nil {
+		erroredPackages = result.ErroredPackages
+	}
+
 	attInput := attestation.BuildAttestationInput(
 		result,
-		opts.CopacticVersion,
+		opts.CopaVersion,
 		platform,
 		opts.Report,
 		opts.IgnoreError,
 		opts.PkgTypes,
 		opts.Scanner,
 		startedAt,
-		nil, // errored packages not available at this call site
+		erroredPackages,
 	)
 
 	if err := attestation.GenerateAndWrite(attInput, opts.AttestationOutput); err != nil {

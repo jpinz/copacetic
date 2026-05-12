@@ -19,7 +19,7 @@ import (
 
 func TestGenerate_MinimalInput(t *testing.T) {
 	input := Input{
-		CopacticVersion: "v0.7.0",
+		CopaVersion: "v0.7.0",
 		OriginalRef:     "docker.io/library/nginx:1.21.6",
 		PatchedRef:      "docker.io/library/nginx:1.21.6-patched",
 		Platform:        "linux/amd64",
@@ -153,7 +153,7 @@ func TestGenerate_Completeness(t *testing.T) {
 
 func TestGenerate_JSONRoundtrip(t *testing.T) {
 	input := Input{
-		CopacticVersion: "v0.7.0",
+		CopaVersion: "v0.7.0",
 		OriginalRef:     "nginx:1.21.6",
 		PatchedRef:      "nginx:1.21.6-patched",
 		Platform:        "linux/amd64",
@@ -275,7 +275,7 @@ func TestBuildAttestationInput(t *testing.T) {
 		[]string{"libfailed"},
 	)
 
-	assert.Equal(t, "v0.7.0", input.CopacticVersion)
+	assert.Equal(t, "v0.7.0", input.CopaVersion)
 	assert.Equal(t, origRef.String(), input.OriginalRef)
 	assert.Equal(t, patchedRef.String(), input.PatchedRef)
 	assert.Equal(t, "linux/amd64", input.Platform)
@@ -309,4 +309,28 @@ func TestBuildAttestationInput_NilResult(t *testing.T) {
 	assert.Equal(t, "", input.PatchedRef)
 	assert.Nil(t, input.OriginalDesc)
 	assert.Nil(t, input.PatchedDesc)
+}
+
+func TestBuildAttestationInput_ErroredPackagesFromResult(t *testing.T) {
+	origRef, err := reference.ParseNormalizedNamed("nginx:1.21.6")
+	require.NoError(t, err)
+	patchedRef, err := reference.ParseNormalizedNamed("nginx:1.21.6-patched")
+	require.NoError(t, err)
+
+	result := &types.PatchResult{
+		OriginalRef:     origRef,
+		PatchedRef:      patchedRef,
+		ErroredPackages: []string{"libssl1.1", "libcurl4"},
+	}
+
+	input := BuildAttestationInput(result, "", "linux/amd64", "", false, "os", "", time.Now(), result.ErroredPackages)
+
+	require.Len(t, input.ErroredPackages, 2)
+	assert.Equal(t, "libssl1.1", input.ErroredPackages[0])
+	assert.Equal(t, "libcurl4", input.ErroredPackages[1])
+
+	// Generate statement and check errored packages appear in patchDetails
+	stmt, err := Generate(input)
+	require.NoError(t, err)
+	assert.Equal(t, result.ErroredPackages, stmt.Predicate.PatchDetails.PackagesErrored)
 }

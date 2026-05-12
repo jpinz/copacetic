@@ -476,10 +476,11 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 		PatchedDesc: patchedDesc,
 	}
 
-	// Include preserved BuildKit states if available
+	// Include preserved BuildKit states and errored packages if available
 	if patchResult != nil {
 		result.PatchedState = patchResult.PatchedState
 		result.ConfigData = patchResult.ConfigData
+		result.ErroredPackages = patchResult.ErroredPackages
 	}
 
 	return result, nil

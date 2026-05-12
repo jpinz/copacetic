@@ -64,8 +64,8 @@ type Options struct {
 	// is available.
 	AttestationOutput string
 
-	// CopacticVersion is the Copa release string (e.g. "v0.7.0").
+	// CopaVersion is the Copa release string (e.g. "v0.7.0").
 	// If set it is embedded in the generated in-toto attestation.
 	// It is populated by the CLI from the binary version at startup.
-	CopacticVersion string
+	CopaVersion string
 }

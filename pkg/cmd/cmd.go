@@ -112,7 +112,7 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 				ExitOnEOL:           ua.exitOnEOL,
 				ConfigFile:          ua.configFile,
 				AttestationOutput:   ua.attestationOutput,
-				CopacticVersion:     cmd.Root().Version,
+				CopaVersion:     cmd.Root().Version,
 			}
 
 			if ua.configFile == "" && ua.appImage == "" {
