@@ -194,6 +194,7 @@ func patchSingleArchImage(
 	})
 	if err != nil {
 		log.Warnf("Failed to get original manifest level annotations for platform %s: %v", targetPlatform.Platform, err)
+		originalAnnotations = map[string]string{}
 	}
 
 	// Create channels for build coordination.
