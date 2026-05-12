@@ -28,30 +28,30 @@ import (
 )
 
 type patchArgs struct {
-	appImage              string
-	report                string
-	patchedTag            string
-	suffix                string
-	workingFolder         string
-	timeout               time.Duration
-	scanner               string
-	ignoreError           bool
-	format                string
-	output                string
-	bkOpts                buildkit.Opts
-	push                  bool
-	platform              []string
-	loader                string
-	pkgTypes              string
-	libraryPatchLevel     string
-	toolchainPatchLevel   string
-	goVCSURL              string
-	progress              string
-	ociDir                string
-	eolAPIBaseURL         string
-	exitOnEOL             bool
-	configFile            string
-	attestationOutput     string
+	appImage                string
+	report                  string
+	patchedTag              string
+	suffix                  string
+	workingFolder           string
+	timeout                 time.Duration
+	scanner                 string
+	ignoreError             bool
+	format                  string
+	output                  string
+	bkOpts                  buildkit.Opts
+	push                    bool
+	platform                []string
+	loader                  string
+	pkgTypes                string
+	libraryPatchLevel       string
+	toolchainPatchLevel     string
+	goVCSURL                string
+	progress                string
+	ociDir                  string
+	eolAPIBaseURL           string
+	exitOnEOL               bool
+	configFile              string
+	attestationOutput       string
 	attestationEmbedReport  bool
 	reportAttestationOutput string
 }

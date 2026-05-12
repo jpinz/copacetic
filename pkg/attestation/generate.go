@@ -267,9 +267,9 @@ func buildMaterials(originalRef string, originalDesc *ispec.Descriptor, reportFi
 		}
 		if originalDesc != nil && originalDesc.Digest != "" {
 			algo := originalDesc.Digest.Algorithm().String()
-			h := originalDesc.Digest.Hex()
-			if algo != "" && h != "" {
-				mat.Digest[algo] = h
+			hexDigest := originalDesc.Digest.Hex()
+			if algo != "" && hexDigest != "" {
+				mat.Digest[algo] = hexDigest
 			}
 		}
 		materials = append(materials, mat)
