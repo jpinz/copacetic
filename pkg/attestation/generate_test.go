@@ -273,6 +273,7 @@ func TestBuildAttestationInput(t *testing.T) {
 		"trivy",
 		startedAt,
 		[]string{"libfailed"},
+		nil,
 	)
 
 	assert.Equal(t, "v0.7.0", input.CopaVersion)
@@ -302,6 +303,7 @@ func TestBuildAttestationInput_NilResult(t *testing.T) {
 		"trivy",
 		time.Now(),
 		nil,
+		nil,
 	)
 
 	// Should not panic; refs will be empty strings
@@ -323,7 +325,7 @@ func TestBuildAttestationInput_ErroredPackagesFromResult(t *testing.T) {
 		ErroredPackages: []string{"libssl1.1", "libcurl4"},
 	}
 
-	input := BuildAttestationInput(result, "", "linux/amd64", "", false, "os", "", time.Now(), result.ErroredPackages)
+	input := BuildAttestationInput(result, "", "linux/amd64", "", false, "os", "", time.Now(), result.ErroredPackages, nil)
 
 	require.Len(t, input.ErroredPackages, 2)
 	assert.Equal(t, "libssl1.1", input.ErroredPackages[0])
@@ -333,4 +335,137 @@ func TestBuildAttestationInput_ErroredPackagesFromResult(t *testing.T) {
 	stmt, err := Generate(input)
 	require.NoError(t, err)
 	assert.Equal(t, result.ErroredPackages, stmt.Predicate.PatchDetails.PackagesErrored)
+}
+
+func TestGenerate_WithReportContent(t *testing.T) {
+	reportJSON := []byte(`{"Results":[{"Target":"nginx:1.21.6","Vulnerabilities":[{"VulnerabilityID":"CVE-2022-0778"}]}]}`)
+
+	input := Input{
+		OriginalRef:   "nginx:1.21.6",
+		PatchedRef:    "nginx:1.21.6-patched",
+		ReportFile:    "/tmp/trivy.json",
+		ReportContent: reportJSON,
+		Scanner:       "trivy",
+		StartedAt:     time.Now().UTC(),
+		FinishedAt:    time.Now().UTC(),
+	}
+
+	stmt, err := Generate(input)
+	require.NoError(t, err)
+
+	// Report digest should be set in invocation parameters
+	assert.NotEmpty(t, stmt.Predicate.Invocation.Parameters.ReportDigest)
+	assert.Equal(t, "trivy.json", stmt.Predicate.Invocation.Parameters.ReportFile)
+
+	// Report should be embedded in patchDetails.scanReport
+	require.NotNil(t, stmt.Predicate.PatchDetails.ScanReport)
+	assert.JSONEq(t, string(reportJSON), string(stmt.Predicate.PatchDetails.ScanReport))
+
+	// Report should appear as a material
+	require.Len(t, stmt.Predicate.Materials, 2)
+	reportMat := stmt.Predicate.Materials[1]
+	assert.Equal(t, "file:trivy.json", reportMat.URI)
+	assert.NotEmpty(t, reportMat.Digest["sha256"])
+}
+
+func TestGenerate_ReportDigestConsistency(t *testing.T) {
+	reportContent := []byte(`{"scanner":"trivy","results":[]}`)
+
+	input := Input{
+		OriginalRef:   "nginx:1.21.6",
+		PatchedRef:    "nginx:1.21.6-patched",
+		ReportFile:    "scan.json",
+		ReportContent: reportContent,
+	}
+
+	stmt, err := Generate(input)
+	require.NoError(t, err)
+
+	// The digest in InvocationParameters should match the material digest
+	paramDigest := stmt.Predicate.Invocation.Parameters.ReportDigest
+	var matDigest string
+	for _, m := range stmt.Predicate.Materials {
+		if m.URI == "file:scan.json" {
+			matDigest = m.Digest["sha256"]
+		}
+	}
+	assert.Equal(t, paramDigest, matDigest, "report digest in parameters should match material digest")
+}
+
+func TestGenerate_NoReportContent(t *testing.T) {
+	input := Input{
+		OriginalRef: "nginx:1.21.6",
+		PatchedRef:  "nginx:1.21.6-patched",
+		ReportFile:  "trivy.json",
+		// ReportContent intentionally nil
+	}
+
+	stmt, err := Generate(input)
+	require.NoError(t, err)
+
+	assert.Empty(t, stmt.Predicate.Invocation.Parameters.ReportDigest)
+	assert.Nil(t, stmt.Predicate.PatchDetails.ScanReport)
+	// Only original image material (no report material)
+	require.Len(t, stmt.Predicate.Materials, 1)
+	assert.Equal(t, "nginx:1.21.6", stmt.Predicate.Materials[0].URI)
+}
+
+func TestWriteReportAttestation(t *testing.T) {
+	reportContent := []byte(`{"Results":[{"Target":"nginx","Vulnerabilities":[]}]}`)
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "report-attest.json")
+
+	err := WriteReportAttestation(
+		reportContent,
+		"nginx:1.21.6-patched",
+		nil,
+		"trivy",
+		"/tmp/trivy.json",
+		outputPath,
+	)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(outputPath)
+	require.NoError(t, err)
+
+	var stmt ReportStatement
+	require.NoError(t, json.Unmarshal(data, &stmt))
+
+	assert.Equal(t, StatementTypeV01, stmt.Type)
+	assert.Equal(t, PredicateTypeCopaReport, stmt.PredicateType)
+	assert.Equal(t, "trivy", stmt.Predicate.Scanner)
+	assert.Equal(t, "trivy.json", stmt.Predicate.ReportFile)
+	assert.JSONEq(t, string(reportContent), string(stmt.Predicate.Report))
+
+	require.Len(t, stmt.Subject, 1)
+	assert.Equal(t, "nginx:1.21.6-patched", stmt.Subject[0].Name)
+}
+
+func TestWriteReportAttestation_EmptyPath(t *testing.T) {
+	err := WriteReportAttestation([]byte(`{}`), "nginx:patched", nil, "trivy", "r.json", "")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "output path must not be empty")
+}
+
+func TestWriteReportAttestation_EmptyContent(t *testing.T) {
+	err := WriteReportAttestation(nil, "nginx:patched", nil, "trivy", "r.json", "/tmp/out.json")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "report content must not be empty")
+}
+
+func TestBuildAttestationInput_WithReportContent(t *testing.T) {
+	origRef, err := reference.ParseNormalizedNamed("nginx:1.21.6")
+	require.NoError(t, err)
+	patchedRef, err := reference.ParseNormalizedNamed("nginx:1.21.6-patched")
+	require.NoError(t, err)
+
+	result := &types.PatchResult{
+		OriginalRef: origRef,
+		PatchedRef:  patchedRef,
+	}
+
+	reportContent := []byte(`{"scanner":"trivy"}`)
+	input := BuildAttestationInput(result, "v0.7.0", "linux/amd64", "scan.json", false, "os", "trivy", time.Now(), nil, reportContent)
+
+	assert.Equal(t, reportContent, input.ReportContent)
 }

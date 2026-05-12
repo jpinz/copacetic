@@ -1,6 +1,8 @@
 package attestation
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -45,6 +47,12 @@ type Input struct {
 
 	// ReportFile is the path to the vulnerability scanner report. May be empty.
 	ReportFile string
+
+	// ReportContent holds the raw bytes of the vulnerability report file.
+	// When non-nil its SHA-256 digest is recorded as a Material in the attestation
+	// and the content is embedded in predicate.patchDetails.scanReport.
+	// Populate this field (e.g. via os.ReadFile) when --attestation-embed-report is set.
+	ReportContent []byte
 
 	// IgnoreError reflects the --ignore-error flag value.
 	IgnoreError bool
@@ -92,10 +100,13 @@ func Generate(input Input) (*Statement, error) {
 	subject := buildSubject(input.PatchedRef, input.PatchedDesc)
 
 	// --- Build materials ---
-	materials := buildMaterials(input.OriginalRef, input.OriginalDesc)
+	materials := buildMaterials(input.OriginalRef, input.OriginalDesc, input.ReportFile, input.ReportContent)
+
+	// --- Compute report digest for invocation parameters ---
+	reportDigest := computeReportDigest(input.ReportContent)
 
 	// --- Build patch details ---
-	patchDetails := buildPatchDetails(input.PatchedRef, input.UpdateManifest, input.PatchSummaryResult, input.ErroredPackages)
+	patchDetails := buildPatchDetails(input.PatchedRef, input.UpdateManifest, input.PatchSummaryResult, input.ErroredPackages, input.ReportContent)
 
 	// --- Build predicate ---
 	pred := CopaPatchPredicate{
@@ -112,6 +123,7 @@ func Generate(input Input) (*Statement, error) {
 				OriginalImageRef: input.OriginalRef,
 				Platform:         input.Platform,
 				ReportFile:       filepath.Base(input.ReportFile),
+				ReportDigest:     reportDigest,
 				IgnoreError:      input.IgnoreError,
 				PkgTypes:         input.PkgTypes,
 				Scanner:          input.Scanner,
@@ -177,6 +189,7 @@ func GenerateAndWrite(input Input, outputPath string) error {
 
 // BuildAttestationInput constructs an attestation Input from the supplied patch result and options.
 // copaVersion is the Copa binary version string (may be empty for dev builds).
+// reportContent is the raw bytes of the vulnerability report file; pass nil when not embedding.
 func BuildAttestationInput(
 	result *types.PatchResult,
 	copaVersion string,
@@ -187,6 +200,7 @@ func BuildAttestationInput(
 	scanner string,
 	startedAt time.Time,
 	erroredPackages []string,
+	reportContent []byte,
 ) Input {
 	var updateManifest *unversioned.UpdateManifest
 	var patchSummary *unversioned.PatchSummary
@@ -196,11 +210,12 @@ func BuildAttestationInput(
 	}
 
 	input := Input{
-		CopaVersion:    copaVersion,
+		CopaVersion:        copaVersion,
 		StartedAt:          startedAt,
 		FinishedAt:         time.Now().UTC(),
 		Platform:           platform,
 		ReportFile:         reportFile,
+		ReportContent:      reportContent,
 		IgnoreError:        ignoreError,
 		PkgTypes:           pkgTypes,
 		Scanner:            scanner,
@@ -242,25 +257,44 @@ func buildSubject(patchedRef string, patchedDesc *ispec.Descriptor) []Subject {
 	return []Subject{subj}
 }
 
-func buildMaterials(originalRef string, originalDesc *ispec.Descriptor) []Material {
-	if originalRef == "" {
-		return nil
-	}
+func buildMaterials(originalRef string, originalDesc *ispec.Descriptor, reportFile string, reportContent []byte) []Material {
+	var materials []Material
 
-	mat := Material{
-		URI:    originalRef,
-		Digest: map[string]string{},
-	}
-
-	if originalDesc != nil && originalDesc.Digest != "" {
-		algo := originalDesc.Digest.Algorithm().String()
-		hex := originalDesc.Digest.Hex()
-		if algo != "" && hex != "" {
-			mat.Digest[algo] = hex
+	if originalRef != "" {
+		mat := Material{
+			URI:    originalRef,
+			Digest: map[string]string{},
 		}
+		if originalDesc != nil && originalDesc.Digest != "" {
+			algo := originalDesc.Digest.Algorithm().String()
+			h := originalDesc.Digest.Hex()
+			if algo != "" && h != "" {
+				mat.Digest[algo] = h
+			}
+		}
+		materials = append(materials, mat)
 	}
 
-	return []Material{mat}
+	// Include the vulnerability report as a material when its content is available.
+	if len(reportContent) > 0 && reportFile != "" {
+		sum := sha256.Sum256(reportContent)
+		materials = append(materials, Material{
+			URI:    "file:" + filepath.Base(reportFile),
+			Digest: map[string]string{"sha256": hex.EncodeToString(sum[:])},
+		})
+	}
+
+	return materials
+}
+
+// computeReportDigest returns the hex-encoded SHA-256 digest of reportContent,
+// or an empty string when reportContent is nil/empty.
+func computeReportDigest(reportContent []byte) string {
+	if len(reportContent) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(reportContent)
+	return hex.EncodeToString(sum[:])
 }
 
 func buildPatchDetails(
@@ -268,10 +302,15 @@ func buildPatchDetails(
 	updateManifest *unversioned.UpdateManifest,
 	summary *unversioned.PatchSummary,
 	erroredPackages []string,
+	reportContent []byte,
 ) PatchDetails {
 	details := PatchDetails{
 		PatchedImageRef: patchedRef,
 		PackagesErrored: erroredPackages,
+	}
+
+	if len(reportContent) > 0 {
+		details.ScanReport = json.RawMessage(reportContent)
 	}
 
 	if updateManifest != nil {
@@ -304,4 +343,55 @@ func buildPatchDetails(
 	}
 
 	return details
+}
+
+// WriteReportAttestation wraps the raw vulnerability scanner report in a
+// Copa in-toto Statement and writes it as indented JSON to outputPath.
+//
+// The statement has:
+//   - subject: the patched image (from patchedRef / patchedDesc)
+//   - predicateType: PredicateTypeCopaReport
+//   - predicate.scanner: scanner name
+//   - predicate.reportFile: base filename of the original report
+//   - predicate.report: the raw JSON of the scanner report
+//
+// Parent directories are created if they do not exist.
+func WriteReportAttestation(reportContent []byte, patchedRef string, patchedDesc *ispec.Descriptor, scanner, reportFile, outputPath string) error {
+	if outputPath == "" {
+		return fmt.Errorf("output path must not be empty")
+	}
+	if len(reportContent) == 0 {
+		return fmt.Errorf("report content must not be empty")
+	}
+
+	subject := buildSubject(patchedRef, patchedDesc)
+
+	stmt := &ReportStatement{
+		Type:          StatementTypeV01,
+		Subject:       subject,
+		PredicateType: PredicateTypeCopaReport,
+		Predicate: ReportPredicate{
+			Scanner:    scanner,
+			ReportFile: filepath.Base(reportFile),
+			Report:     json.RawMessage(reportContent),
+		},
+	}
+
+	data, err := json.MarshalIndent(stmt, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal report attestation to JSON: %w", err)
+	}
+
+	dir := filepath.Dir(outputPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("failed to create report attestation output directory %s: %w", dir, err)
+	}
+
+	//nolint:gosec // output path is user-provided; permissions are intentionally readable
+	if err := os.WriteFile(outputPath, data, 0o644); err != nil {
+		return fmt.Errorf("failed to write report attestation to %s: %w", outputPath, err)
+	}
+
+	log.Infof("Report attestation written to %s", outputPath)
+	return nil
 }

@@ -16,7 +16,10 @@
 // and not available without a push).
 package attestation
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 const (
 	// StatementTypeV01 is the in-toto Statement type URI for version 0.1.
@@ -24,6 +27,10 @@ const (
 
 	// PredicateTypeCopaPatch is the Copa-specific predicate type URI.
 	PredicateTypeCopaPatch = "https://copacetic.dev/patch/v0.1"
+
+	// PredicateTypeCopaReport is the Copa-specific predicate type URI for a
+	// vulnerability report attestation.
+	PredicateTypeCopaReport = "https://copacetic.dev/vulnerability-report/v0.1"
 
 	// BuildTypeURI identifies the build type performed by Copa.
 	BuildTypeURI = "https://copacetic.dev/patch/v0.1"
@@ -114,6 +121,10 @@ type InvocationParameters struct {
 	// ReportFile is the path or name of the vulnerability scanner report, if any.
 	ReportFile string `json:"reportFile,omitempty"`
 
+	// ReportDigest is the SHA-256 hex digest of the vulnerability report file content.
+	// Only set when --attestation-embed-report is used.
+	ReportDigest string `json:"reportDigest,omitempty"`
+
 	// IgnoreError indicates whether Copa was run with --ignore-error.
 	IgnoreError bool `json:"ignoreError"`
 
@@ -171,6 +182,10 @@ type PatchDetails struct {
 
 	// Summary aggregates patch outcome counts.
 	Summary *PatchSummary `json:"summary,omitempty"`
+
+	// ScanReport contains the raw JSON of the vulnerability report used for
+	// patching. Only populated when --attestation-embed-report is set.
+	ScanReport json.RawMessage `json:"scanReport,omitempty"`
 }
 
 // PackageUpdate records a single package vulnerability that Copa addressed.
@@ -187,4 +202,33 @@ type PatchSummary struct {
 	Total   int `json:"total"`
 	Patched int `json:"patched"`
 	Skipped int `json:"skipped"`
+}
+
+// ReportPredicate is the predicate for a Copa vulnerability-report in-toto Statement.
+// It wraps the raw scanner report so it can be stored as a verifiable attestation.
+type ReportPredicate struct {
+	// Scanner is the name of the tool that generated the report (e.g. "trivy").
+	Scanner string `json:"scanner,omitempty"`
+
+	// ReportFile is the base filename of the original report.
+	ReportFile string `json:"reportFile,omitempty"`
+
+	// Report is the raw JSON content of the vulnerability scanner report.
+	Report json.RawMessage `json:"report"`
+}
+
+// ReportStatement is a plain-Go representation of an in-toto Statement (v0.1)
+// whose predicate is the raw vulnerability scanner report used during patching.
+type ReportStatement struct {
+	// Type must always be StatementTypeV01.
+	Type string `json:"_type"`
+
+	// Subject identifies the artifact(s) the attestation applies to.
+	Subject []Subject `json:"subject"`
+
+	// PredicateType describes the schema of Predicate.
+	PredicateType string `json:"predicateType"`
+
+	// Predicate holds the scanner report.
+	Predicate ReportPredicate `json:"predicate"`
 }

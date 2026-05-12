@@ -64,6 +64,20 @@ type Options struct {
 	// is available.
 	AttestationOutput string
 
+	// AttestationEmbedReport, when true, reads the vulnerability report file
+	// (opts.Report) and embeds its content in the in-toto attestation:
+	//   - The report's SHA-256 digest is recorded as a material.
+	//   - The full raw JSON is embedded in predicate.patchDetails.scanReport.
+	// Has no effect when AttestationOutput is empty or Report is empty.
+	AttestationEmbedReport bool
+
+	// ReportAttestationOutput, if set, causes Copa to write the vulnerability
+	// report as a separate in-toto Statement to this file path.
+	// The statement wraps the raw scanner JSON under predicateType
+	// https://copacetic.dev/vulnerability-report/v0.1.
+	// Has no effect when Report is empty.
+	ReportAttestationOutput string
+
 	// CopaVersion is the Copa release string (e.g. "v0.7.0").
 	// If set it is embedded in the generated in-toto attestation.
 	// It is populated by the CLI from the binary version at startup.

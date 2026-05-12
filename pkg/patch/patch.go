@@ -9,6 +9,7 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/moby/buildkit/util/progress/progressui"
+	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/project-copacetic/copacetic/pkg/attestation"
@@ -135,6 +136,7 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
 				maybeWriteAttestation(opts, result, patchPlatform.String(), startedAt)
+				maybeWriteReportAttestation(opts, result)
 			}
 			return err
 		}
@@ -169,6 +171,7 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
 				maybeWriteAttestation(opts, result, patchPlatform.String(), startedAt)
+				maybeWriteReportAttestation(opts, result)
 			}
 			return err
 		}
@@ -214,6 +217,7 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 	if err == nil && result != nil {
 		log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef.String())
 		maybeWriteAttestation(opts, result, patchPlatform.String(), startedAt)
+		maybeWriteReportAttestation(opts, result)
 	}
 	return err
 }
@@ -231,6 +235,16 @@ func maybeWriteAttestation(opts *types.Options, result *types.PatchResult, platf
 		erroredPackages = result.ErroredPackages
 	}
 
+	// Read the report file content when embedding is requested.
+	var reportContent []byte
+	if opts.AttestationEmbedReport && opts.Report != "" {
+		var err error
+		reportContent, err = os.ReadFile(opts.Report)
+		if err != nil {
+			log.Warnf("Failed to read report file %s for attestation embedding: %v", opts.Report, err)
+		}
+	}
+
 	attInput := attestation.BuildAttestationInput(
 		result,
 		opts.CopaVersion,
@@ -241,10 +255,46 @@ func maybeWriteAttestation(opts *types.Options, result *types.PatchResult, platf
 		opts.Scanner,
 		startedAt,
 		erroredPackages,
+		reportContent,
 	)
 
 	if err := attestation.GenerateAndWrite(attInput, opts.AttestationOutput); err != nil {
 		log.Warnf("Failed to write attestation to %s: %v", opts.AttestationOutput, err)
+	}
+}
+
+// maybeWriteReportAttestation writes the vulnerability report as a separate in-toto
+// Statement to opts.ReportAttestationOutput when that path is non-empty and a
+// report file is available. Errors are logged as warnings.
+func maybeWriteReportAttestation(opts *types.Options, result *types.PatchResult) {
+	if opts.ReportAttestationOutput == "" || opts.Report == "" {
+		return
+	}
+
+	reportContent, err := os.ReadFile(opts.Report)
+	if err != nil {
+		log.Warnf("Failed to read report file %s for report attestation: %v", opts.Report, err)
+		return
+	}
+
+	var patchedRef string
+	var patchedDesc *ispec.Descriptor
+	if result != nil {
+		if result.PatchedRef != nil {
+			patchedRef = result.PatchedRef.String()
+		}
+		patchedDesc = result.PatchedDesc
+	}
+
+	if err := attestation.WriteReportAttestation(
+		reportContent,
+		patchedRef,
+		patchedDesc,
+		opts.Scanner,
+		opts.Report,
+		opts.ReportAttestationOutput,
+	); err != nil {
+		log.Warnf("Failed to write report attestation to %s: %v", opts.ReportAttestationOutput, err)
 	}
 }
 
