@@ -9,8 +9,10 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/moby/buildkit/util/progress/progressui"
+	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	log "github.com/sirupsen/logrus"
 
+	"github.com/project-copacetic/copacetic/pkg/attestation"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/tui"
@@ -87,6 +89,9 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 		log.Debugf("Configured EOL API base URL: %s", opts.EOLAPIBaseURL)
 	}
 
+	// Record when the overall patch operation started, for use in attestations.
+	startedAt := time.Now().UTC()
+
 	image := opts.Image
 	reportPath := opts.Report
 	targetPlatforms := opts.Platforms
@@ -130,6 +135,8 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 			}
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
+				maybeWriteAttestation(opts, result, patchPlatform.String(), startedAt)
+				maybeWriteReportAttestation(opts, result)
 			}
 			return err
 		}
@@ -163,6 +170,8 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 			}
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
+				maybeWriteAttestation(opts, result, patchPlatform.String(), startedAt)
+				maybeWriteReportAttestation(opts, result)
 			}
 			return err
 		}
@@ -207,8 +216,86 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 	}
 	if err == nil && result != nil {
 		log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef.String())
+		maybeWriteAttestation(opts, result, patchPlatform.String(), startedAt)
+		maybeWriteReportAttestation(opts, result)
 	}
 	return err
+}
+
+// maybeWriteAttestation generates and writes an in-toto attestation for the patched
+// image if opts.AttestationOutput is non-empty. Errors are logged as warnings so
+// that attestation failures do not block the patch operation from succeeding.
+func maybeWriteAttestation(opts *types.Options, result *types.PatchResult, platform string, startedAt time.Time) {
+	if opts.AttestationOutput == "" {
+		return
+	}
+
+	var erroredPackages []string
+	if result != nil {
+		erroredPackages = result.ErroredPackages
+	}
+
+	// Read the report file content when embedding is requested.
+	var reportContent []byte
+	if opts.AttestationEmbedReport && opts.Report != "" {
+		var err error
+		reportContent, err = os.ReadFile(opts.Report)
+		if err != nil {
+			log.Warnf("Failed to read report file %s for attestation embedding: %v", opts.Report, err)
+		}
+	}
+
+	attInput := attestation.BuildAttestationInput(
+		result,
+		opts.CopaVersion,
+		platform,
+		opts.Report,
+		opts.IgnoreError,
+		opts.PkgTypes,
+		opts.Scanner,
+		startedAt,
+		erroredPackages,
+		reportContent,
+	)
+
+	if err := attestation.GenerateAndWrite(attInput, opts.AttestationOutput); err != nil {
+		log.Warnf("Failed to write attestation to %s: %v", opts.AttestationOutput, err)
+	}
+}
+
+// maybeWriteReportAttestation writes the vulnerability report as a separate in-toto
+// Statement to opts.ReportAttestationOutput when that path is non-empty and a
+// report file is available. Errors are logged as warnings.
+func maybeWriteReportAttestation(opts *types.Options, result *types.PatchResult) {
+	if opts.ReportAttestationOutput == "" || opts.Report == "" {
+		return
+	}
+
+	reportContent, err := os.ReadFile(opts.Report)
+	if err != nil {
+		log.Warnf("Failed to read report file %s for report attestation: %v", opts.Report, err)
+		return
+	}
+
+	var patchedRef string
+	var patchedDesc *ispec.Descriptor
+	if result != nil {
+		if result.PatchedRef != nil {
+			patchedRef = result.PatchedRef.String()
+		}
+		patchedDesc = result.PatchedDesc
+	}
+
+	if err := attestation.WriteReportAttestation(
+		reportContent,
+		patchedRef,
+		patchedDesc,
+		opts.Scanner,
+		opts.Report,
+		opts.ReportAttestationOutput,
+	); err != nil {
+		log.Warnf("Failed to write report attestation to %s: %v", opts.ReportAttestationOutput, err)
+	}
 }
 
 // logPatchSummary prints the patch summary if available.

@@ -169,6 +169,20 @@ func patchSingleArchImage(
 	// Determine the loader type
 	finalLoaderType := determineLoaderType(loader, bkOpts.Addr)
 
+	// Capture the original image descriptor BEFORE patching begins.
+	// This must happen before the build/load phase to ensure we get the descriptor
+	// of the original image even when the same tag is reused for the patched image.
+	originalRuntime := imageloader.Docker
+	if finalLoaderType == imageloader.Podman {
+		originalRuntime = imageloader.Podman
+	}
+	originalDesc, err := utils.GetImageDescriptor(ctx, image, originalRuntime)
+	if err != nil {
+		log.Warnf("Could not capture original image descriptor before patching (original digest will be unavailable in attestation): %v", err)
+	} else {
+		log.Debugf("Captured original image descriptor: %s", originalDesc.Digest)
+	}
+
 	// Check media type for OCI vs Docker export
 	shouldExportOCI := shouldExportAsOCI(ref, finalLoaderType)
 
@@ -281,6 +295,8 @@ func patchSingleArchImage(
 	if err != nil {
 		return nil, err
 	}
+	// Store the original descriptor captured before patching for use in attestation.
+	result.OriginalDesc = originalDesc
 	if updates != nil {
 		result.Summary = updates.CombinedSummary()
 	}
@@ -471,10 +487,11 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 		PatchedDesc: patchedDesc,
 	}
 
-	// Include preserved BuildKit states if available
+	// Include preserved BuildKit states and errored packages if available
 	if patchResult != nil {
 		result.PatchedState = patchResult.PatchedState
 		result.ConfigData = patchResult.ConfigData
+		result.ErroredPackages = patchResult.ErroredPackages
 	}
 
 	return result, nil

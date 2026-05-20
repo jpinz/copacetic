@@ -28,29 +28,32 @@ import (
 )
 
 type patchArgs struct {
-	appImage            string
-	report              string
-	patchedTag          string
-	suffix              string
-	workingFolder       string
-	timeout             time.Duration
-	scanner             string
-	ignoreError         bool
-	format              string
-	output              string
-	bkOpts              buildkit.Opts
-	push                bool
-	platform            []string
-	loader              string
-	pkgTypes            string
-	libraryPatchLevel   string
-	toolchainPatchLevel string
-	goVCSURL            string
-	progress            string
-	ociDir              string
-	eolAPIBaseURL       string
-	exitOnEOL           bool
-	configFile          string
+	appImage                string
+	report                  string
+	patchedTag              string
+	suffix                  string
+	workingFolder           string
+	timeout                 time.Duration
+	scanner                 string
+	ignoreError             bool
+	format                  string
+	output                  string
+	bkOpts                  buildkit.Opts
+	push                    bool
+	platform                []string
+	loader                  string
+	pkgTypes                string
+	libraryPatchLevel       string
+	toolchainPatchLevel     string
+	goVCSURL                string
+	progress                string
+	ociDir                  string
+	eolAPIBaseURL           string
+	exitOnEOL               bool
+	configFile              string
+	attestationOutput       string
+	attestationEmbedReport  bool
+	reportAttestationOutput string
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -60,7 +63,7 @@ func NewPatchCmd() *cobra.Command {
 		Short: "Patch container image(s) with upgrade packages specified by a vulnerability report or by comprehensive update",
 		Example: `copa patch -i images/python:3.7-alpine -r trivy.json -t 3.7-alpine-patched (Single Image Patching)
 copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Validate library patch level
 			if err := validateLibraryPatchLevel(ua.libraryPatchLevel, ua.pkgTypes); err != nil {
 				return err
@@ -84,32 +87,36 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 			defer signal.Stop(forceQuitCh)
 
 			opts := &types.Options{
-				Image:               ua.appImage,
-				Report:              ua.report,
-				PatchedTag:          ua.patchedTag,
-				Suffix:              ua.suffix,
-				WorkingFolder:       ua.workingFolder,
-				Timeout:             ua.timeout,
-				Scanner:             ua.scanner,
-				IgnoreError:         ua.ignoreError,
-				Format:              ua.format,
-				Output:              ua.output,
-				BkAddr:              ua.bkOpts.Addr,
-				BkCACertPath:        ua.bkOpts.CACertPath,
-				BkCertPath:          ua.bkOpts.CertPath,
-				BkKeyPath:           ua.bkOpts.KeyPath,
-				Push:                ua.push,
-				Platforms:           ua.platform,
-				Loader:              ua.loader,
-				PkgTypes:            ua.pkgTypes,
-				LibraryPatchLevel:   ua.libraryPatchLevel,
-				ToolchainPatchLevel: ua.toolchainPatchLevel,
-				GoVCSURL:            ua.goVCSURL,
-				Progress:            progressui.DisplayMode(ua.progress),
-				OCIDir:              ua.ociDir,
-				EOLAPIBaseURL:       ua.eolAPIBaseURL,
-				ExitOnEOL:           ua.exitOnEOL,
-				ConfigFile:          ua.configFile,
+				Image:                   ua.appImage,
+				Report:                  ua.report,
+				PatchedTag:              ua.patchedTag,
+				Suffix:                  ua.suffix,
+				WorkingFolder:           ua.workingFolder,
+				Timeout:                 ua.timeout,
+				Scanner:                 ua.scanner,
+				IgnoreError:             ua.ignoreError,
+				Format:                  ua.format,
+				Output:                  ua.output,
+				BkAddr:                  ua.bkOpts.Addr,
+				BkCACertPath:            ua.bkOpts.CACertPath,
+				BkCertPath:              ua.bkOpts.CertPath,
+				BkKeyPath:               ua.bkOpts.KeyPath,
+				Push:                    ua.push,
+				Platforms:               ua.platform,
+				Loader:                  ua.loader,
+				PkgTypes:                ua.pkgTypes,
+				LibraryPatchLevel:       ua.libraryPatchLevel,
+				ToolchainPatchLevel:     ua.toolchainPatchLevel,
+				GoVCSURL:                ua.goVCSURL,
+				Progress:                progressui.DisplayMode(ua.progress),
+				OCIDir:                  ua.ociDir,
+				EOLAPIBaseURL:           ua.eolAPIBaseURL,
+				ExitOnEOL:               ua.exitOnEOL,
+				ConfigFile:              ua.configFile,
+				AttestationOutput:       ua.attestationOutput,
+				AttestationEmbedReport:  ua.attestationEmbedReport,
+				ReportAttestationOutput: ua.reportAttestationOutput,
+				CopaVersion:             cmd.Root().Version,
 			}
 
 			if ua.configFile == "" && ua.appImage == "" {
@@ -161,6 +168,20 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 	flags.StringVar(&ua.eolAPIBaseURL, "eol-api-url", "", "EOL API base URL, defaults to 'https://endoflife.date/api/v1/products'")
 	flags.BoolVar(&ua.exitOnEOL, "exit-on-eol", false, "Exit with error when EOL (End of Life) operating system is detected")
 	flags.StringVar(&ua.progress, "progress", "auto", "Set the buildkit display mode (auto, plain, tty, quiet or rawjson). Set to quiet to discard all output.")
+	flags.StringVar(&ua.attestationOutput, "attestation-output", "",
+		"Write a Copa in-toto attestation (JSON) for the patched image to this file path. "+
+			"The attestation records the original image digest, patch invocation parameters, "+
+			"and package update details. For local (non-pushed) images the attestation is "+
+			"written as a sidecar JSON file since OCI referrer attachment requires a registry.")
+	flags.BoolVar(&ua.attestationEmbedReport, "attestation-embed-report", false,
+		"Embed the vulnerability report in the in-toto attestation. "+
+			"When set, the report's SHA-256 digest is added as a material and the full "+
+			"report JSON is embedded in predicate.patchDetails.scanReport. "+
+			"Requires --attestation-output and --report to be set.")
+	flags.StringVar(&ua.reportAttestationOutput, "report-attestation-output", "",
+		"Write the vulnerability report as a separate Copa in-toto attestation (JSON) to this file path. "+
+			"The statement uses predicateType https://copacetic.dev/vulnerability-report/v0.1 "+
+			"and wraps the raw scanner report. Requires --report to be set.")
 
 	// Experimental flags - only available when COPA_EXPERIMENTAL=1
 	if os.Getenv("COPA_EXPERIMENTAL") == "1" {

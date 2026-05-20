@@ -46,12 +46,14 @@ func (p PatchPlatform) String() string {
 
 // PatchResult represents the result of a single arch patch operation.
 type PatchResult struct {
-	OriginalRef  reference.Named
-	PatchedDesc  *ispec.Descriptor
-	PatchedRef   reference.Named
-	PatchedState *llb.State                // BuildKit state for OCI export
-	ConfigData   []byte                    // Image config data
-	Summary      *unversioned.PatchSummary // Patch summary, nil if unavailable
+	OriginalRef     reference.Named
+	OriginalDesc    *ispec.Descriptor             // Original image descriptor, captured before patching
+	PatchedDesc     *ispec.Descriptor
+	PatchedRef      reference.Named
+	PatchedState    *llb.State                // BuildKit state for OCI export
+	ConfigData      []byte                    // Image config data
+	Summary         *unversioned.PatchSummary // Patch summary, nil if unavailable
+	ErroredPackages []string                  // Package names that could not be patched
 }
 
 type MultiPlatformSummary struct {
